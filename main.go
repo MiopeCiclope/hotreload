@@ -27,8 +27,8 @@ func runBuild(ctx context.Context) {
 	command := strings.Split(app, " ")
 	cmd := exec.CommandContext(ctx, "npm", command...)
 	toExecute := filepath.Dir(Path)
-
 	cmd.Dir = toExecute
+
 	stdout, err := cmd.Output()
 
 	if err != nil {
@@ -71,27 +71,6 @@ func isBlackListed(folderName string) bool {
 	return false
 }
 
-// func buildPrjects(file chan string) {
-// 	isRunning := false
-// 	for {
-// 		select {
-// 		case fileName := <-file:
-// 			fmt.Println(isRunning)
-
-// 			if !isRunning {
-// 				isRunning = true
-// 				time.Sleep(5 * time.Second)
-// 				fmt.Println("Build on:", fileName)
-// 				// Run build command
-// 				// runBuild()
-// 				isRunning = false
-// 			} else {
-// 				fmt.Println("Build already on")
-// 			}
-// 		}
-// 	}
-// }
-
 func main() {
 	watcher, err := fsnotify.NewWatcher()
 	check(err)
@@ -101,22 +80,14 @@ func main() {
 	watchRecursive(toWatch, watcher)
 	fmt.Println("watching dir: ", toWatch)
 
-	cancellationToken := make(chan context.CancelFunc)
 	storeCancellation := byPass()
-	go func() {
-		cancellationFunction := <-cancellationToken
-		fmt.Println("Cancel trigger")
-		cancellationFunction()
-	}()
-
 	// Notify when a change happens
 	for {
 		select {
 		case event := <-watcher.Events:
 			if event.Op != fsnotify.Chmod {
-				fmt.Println("Start build")
 				ctx, cancel := context.WithCancel(context.Background())
-				storeCancellation(cancel, cancellationToken)
+				storeCancellation(cancel)
 				fmt.Println("Build Trigger:", event.String())
 				// Run build command
 				go runBuild(ctx)
@@ -127,16 +98,12 @@ func main() {
 	}
 }
 
-func byPass() func(context.CancelFunc, chan context.CancelFunc) {
-	fmt.Println("initialized")
+func byPass() func(context.CancelFunc) {
 	var previousFunction context.CancelFunc
-	return func(cancelFunction context.CancelFunc, channel chan context.CancelFunc) {
+	return func(cancelFunction context.CancelFunc) {
 		if previousFunction != nil {
-			fmt.Println("channel cancel")
-			channel <- previousFunction
+			previousFunction()
 		}
-		fmt.Println("saved cancel")
-
 		previousFunction = cancelFunction
 	}
 }
