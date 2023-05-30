@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,10 +22,10 @@ func check(err error) {
 }
 
 // Build command for products package
-func runBuild() {
+func runBuild(ctx context.Context) {
 	app := "run build -- products"
 	command := strings.Split(app, " ")
-	cmd := exec.Command("npm", command...)
+	cmd := exec.CommandContext(ctx, "npm", command...)
 	toExecute := filepath.Dir(Path)
 
 	cmd.Dir = toExecute
@@ -70,6 +71,27 @@ func isBlackListed(folderName string) bool {
 	return false
 }
 
+// func buildPrjects(file chan string) {
+// 	isRunning := false
+// 	for {
+// 		select {
+// 		case fileName := <-file:
+// 			fmt.Println(isRunning)
+
+// 			if !isRunning {
+// 				isRunning = true
+// 				time.Sleep(5 * time.Second)
+// 				fmt.Println("Build on:", fileName)
+// 				// Run build command
+// 				// runBuild()
+// 				isRunning = false
+// 			} else {
+// 				fmt.Println("Build already on")
+// 			}
+// 		}
+// 	}
+// }
+
 func main() {
 	watcher, err := fsnotify.NewWatcher()
 	check(err)
@@ -79,24 +101,35 @@ func main() {
 	watchRecursive(toWatch, watcher)
 	fmt.Println("watching dir: ", toWatch)
 
-	//Flag to avoid trigger of multiple builds on branch checkout
-	isBuilding := false
-
+	cancellationToken := make(chan context.CancelFunc)
+	storeCancellation := byPass()
 	// Notify when a change happens
 	for {
 		select {
 		case event := <-watcher.Events:
-			if !isBuilding && event.Op != fsnotify.Chmod {
-				isBuilding = true
-				fmt.Println("Build on:", event.String())
+			if event.Op != fsnotify.Chmod {
+				fmt.Println("Start build")
+				ctx, cancel := context.WithCancel(context.Background())
+				storeCancellation(cancel, cancellationToken)
+				fmt.Println("Build Trigger:", event.String())
 				// Run build command
-				runBuild()
-				isBuilding = false
-			} else {
-				fmt.Println("No build trigger", event.String())
+				runBuild(ctx)
 			}
+		case cancellationFunction := <-cancellationToken:
+			fmt.Println("Cancel trigger")
+			cancellationFunction()
 		case err, ok := <-watcher.Errors:
 			fmt.Println(ok, err)
 		}
+	}
+}
+
+func byPass() func(context.CancelFunc, chan context.CancelFunc) {
+	var previousFunction context.CancelFunc
+	return func(cancelFunction context.CancelFunc, channel chan context.CancelFunc) {
+		if previousFunction != nil {
+			channel <- previousFunction
+		}
+		previousFunction = cancelFunction
 	}
 }
