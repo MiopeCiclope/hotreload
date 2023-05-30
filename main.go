@@ -103,6 +103,12 @@ func main() {
 
 	cancellationToken := make(chan context.CancelFunc)
 	storeCancellation := byPass()
+	go func() {
+		cancellationFunction := <-cancellationToken
+		fmt.Println("Cancel trigger")
+		cancellationFunction()
+	}()
+
 	// Notify when a change happens
 	for {
 		select {
@@ -113,11 +119,8 @@ func main() {
 				storeCancellation(cancel, cancellationToken)
 				fmt.Println("Build Trigger:", event.String())
 				// Run build command
-				runBuild(ctx)
+				go runBuild(ctx)
 			}
-		case cancellationFunction := <-cancellationToken:
-			fmt.Println("Cancel trigger")
-			cancellationFunction()
 		case err, ok := <-watcher.Errors:
 			fmt.Println(ok, err)
 		}
@@ -125,11 +128,15 @@ func main() {
 }
 
 func byPass() func(context.CancelFunc, chan context.CancelFunc) {
+	fmt.Println("initialized")
 	var previousFunction context.CancelFunc
 	return func(cancelFunction context.CancelFunc, channel chan context.CancelFunc) {
 		if previousFunction != nil {
+			fmt.Println("channel cancel")
 			channel <- previousFunction
 		}
+		fmt.Println("saved cancel")
+
 		previousFunction = cancelFunction
 	}
 }
