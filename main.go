@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,14 +30,22 @@ func runBuild(ctx context.Context) {
 	toExecute := filepath.Dir(Path)
 	cmd.Dir = toExecute
 
-	stdout, err := cmd.Output()
-
+	err := cmd.Start()
 	if err != nil {
-		fmt.Println(err)
+		log.Fatal(err)
 		return
 	}
 
-	fmt.Println(string(stdout))
+	err = cmd.Wait()
+	if err != nil {
+		return
+	}
+
+	fmt.Println("Kept running")
+
+	stout, _ := cmd.Output()
+	fmt.Println(stout)
+
 }
 
 // Find all folders inside root to watch
@@ -98,6 +107,8 @@ func main() {
 	}
 }
 
+// On first call saves the cancel that needs to be trigger
+// in the next call (no context to close on first, none running)
 func byPass() func(context.CancelFunc) {
 	var previousFunction context.CancelFunc
 	return func(cancelFunction context.CancelFunc) {
