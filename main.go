@@ -60,7 +60,7 @@ func watchRecursive(path string, watcher *fsnotify.Watcher) error {
 
 // Ignore folders changed on build
 func isBlackListed(folderName string) bool {
-	blackList := []string{"dist", "node_modules", "build"}
+	blackList := []string{"dist", "node_modules", "build", ".git"}
 
 	for _, name := range blackList {
 		if strings.Contains(folderName, name) {
@@ -70,18 +70,6 @@ func isBlackListed(folderName string) bool {
 	return false
 }
 
-// Adding a different black list for files
-// Cause fsnotify focus sugests to wacth folders not files
-func isFileBlackListed(folderName string) bool {
-	blackList := []string{".git"}
-
-	for _, name := range blackList {
-		if strings.Contains(folderName, name) {
-			return true
-		}
-	}
-	return false
-}
 func main() {
 	watcher, err := fsnotify.NewWatcher()
 	check(err)
@@ -91,14 +79,21 @@ func main() {
 	watchRecursive(toWatch, watcher)
 	fmt.Println("watching dir: ", toWatch)
 
+	//Flag to avoid trigger of multiple builds on branch checkout
+	isBuilding := false
+
 	// Notify when a change happens
 	for {
 		select {
-		case event, ok := <-watcher.Events:
-			if !isFileBlackListed(event.Name) && event.Op != fsnotify.Chmod {
-				fmt.Println(ok, event.String())
+		case event := <-watcher.Events:
+			if !isBuilding && event.Op != fsnotify.Chmod {
+				isBuilding = true
+				fmt.Println("Build on:", event.String())
 				// Run build command
-				// runBuild()
+				runBuild()
+				isBuilding = false
+			} else {
+				fmt.Println("No build trigger", event.String())
 			}
 		case err, ok := <-watcher.Errors:
 			fmt.Println(ok, err)
