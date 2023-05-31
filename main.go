@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
@@ -110,17 +111,16 @@ func main() {
 	watchRecursive(toWatch, watcher)
 	fmt.Println("watching dir: ", toWatch)
 
-	storeCancellation := byPass()
+	var daemon Daemon
+
 	// Notify when a change happens
 	for {
 		select {
 		case event := <-watcher.Events:
 			if event.Op != fsnotify.Chmod {
-				ctx, cancel := context.WithCancel(context.Background())
-				storeCancellation(cancel)
-				fmt.Println("Build Trigger:", event.String())
+				// fmt.Println("Build Trigger:", event.String())
 				// Run build command
-				go runBuild(ctx)
+				go daemon.Start()
 			}
 		case err, ok := <-watcher.Errors:
 			fmt.Println(ok, err)
@@ -128,14 +128,77 @@ func main() {
 	}
 }
 
-// On first call saves the cancel that needs to be trigger
-// in the next call (no context to close on first, none running)
-func byPass() func(context.CancelFunc) {
-	var previousFunction context.CancelFunc
-	return func(cancelFunction context.CancelFunc) {
-		if previousFunction != nil {
-			previousFunction()
-		}
-		previousFunction = cancelFunction
+type Daemon struct {
+	cmdErr error
+	cancel func()
+}
+
+func (d *Daemon) Start() {
+	fmt.Println("Start")
+	if d.cancel != nil {
+		d.cancel()
 	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	d.cancel = cancel
+
+	app := "run build -- products"
+	command := strings.Split(app, " ")
+	cmd := exec.CommandContext(ctx, "npm", command...)
+	toExecute := filepath.Dir(Path)
+	cmd.Dir = toExecute
+
+	// outR, outW := io.Pipe()
+	// cmd.Stdout = io.MultiWriter(outW, os.Stdout)
+	// cmd.Stderr = os.Stderr
+	// lines := make(chan string)
+	// go func() {
+	// 	for line := range lines {
+	// 		fmt.Println(line)
+	// 	}
+	// }()
+
+	// go func() {
+	// 	defer close(lines)
+	// 	scanner := bufio.NewScanner(outR)
+	// 	for scanner.Scan() {
+	// 		lines <- scanner.Text()
+	// 	}
+	// 	if err := scanner.Err(); err != nil {
+	// 		fmt.Println("scanner: ", err)
+	// 	}
+	// }()
+	time.Sleep(500 * time.Millisecond)
+	err := cmd.Start()
+	if err != nil {
+		if cmd.Process != nil {
+			fmt.Println("Killing time")
+			cmd.Process.Kill()
+		}
+		fmt.Println("Fatal", err)
+	}
+
+	go func() {
+		err := cmd.Wait()
+		// if cmd.Process != nil {
+		// 	cmd.Process.Kill()
+		// }
+		fmt.Println("command exited; error is:", err)
+		// _ = outW.Close() // TODO: handle error from Close(); log it maybe.
+		d.cmdErr = err
+	}()
+}
+
+// Cancel causes the running command to exit preemptively.
+// If Cancel is called after the command has already
+// exited either naturally or due to a previous Cancel call,
+// then Cancel has no effect.
+func (d *Daemon) Cancel() {
+	d.cancel()
+}
+
+// CmdErr returns the error, if any, from the command's exit.
+// Only valid after the channel returned by Done() has been closed.
+func (d *Daemon) CmdErr() error {
+	return d.cmdErr
 }
