@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -30,6 +32,28 @@ func runBuild(ctx context.Context) {
 	toExecute := filepath.Dir(Path)
 	cmd.Dir = toExecute
 
+	outR, outW := io.Pipe()
+	cmd.Stdout = io.MultiWriter(outW, os.Stdout)
+	cmd.Stderr = os.Stderr
+
+	lines := make(chan string)
+	go func() {
+		for line := range lines {
+			fmt.Println(line)
+		}
+	}()
+
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(outR)
+		for scanner.Scan() {
+			lines <- scanner.Text()
+		}
+		if err := scanner.Err(); err != nil {
+			fmt.Println(err)
+		}
+	}()
+
 	err := cmd.Start()
 	if err != nil {
 		log.Fatal(err)
@@ -37,15 +61,12 @@ func runBuild(ctx context.Context) {
 	}
 
 	err = cmd.Wait()
+	_ = outW.Close()
 	if err != nil {
 		return
 	}
 
 	fmt.Println("Kept running")
-
-	stout, _ := cmd.Output()
-	fmt.Println(stout)
-
 }
 
 // Find all folders inside root to watch
