@@ -64,17 +64,21 @@ func main() {
 	watchRecursive(toWatch, watcher)
 	threadCounter := counter()
 	fmt.Println("watching dir: ", toWatch)
-	quit := make(chan bool)
+	quit := make(chan int)
+
 	// Notify when a change happens
 	for {
 		select {
 		case event := <-watcher.Events:
+			fmt.Println("Got notified")
 			if event.Op != fsnotify.Chmod {
-				// fmt.Println("Build Trigger:", event.String())
-				quit <- true
-				// Run build command
-				daemon := getInstance()
-				go daemon.Start(threadCounter, quit)
+				threadId := threadCounter()
+				if threadId > 1 {
+					quit <- threadId
+				}
+
+				ctx, cancel := context.WithCancel(context.Background())
+				go start(threadId, quit, ctx, cancel)
 			}
 		case err, ok := <-watcher.Errors:
 			fmt.Println(ok, err)
@@ -90,43 +94,17 @@ func counter() func() int {
 	}
 }
 
-// var lock = &sync.Mutex{}
-
-var singleInstance *Daemon
-
-func getInstance() *Daemon {
-	// lock.Lock()
-	if singleInstance == nil {
-		fmt.Println("Creating single instance now.")
-		singleInstance = &Daemon{}
-	} else {
-		singleInstance.Cancel()
-		fmt.Println("Single instance already created.")
-	}
-	// lock.Unlock()
-
-	return singleInstance
-}
-
-type Daemon struct {
-	cmdErr error
-	cancel func()
-}
-
-func (d *Daemon) Start(getId func() int, quit chan bool) {
-	tId := getId()
+func start(tId int, quit chan int, ctx context.Context, cancel context.CancelFunc) {
 	fmt.Println("Thread-", tId, " -> start")
 
 	select {
-	case <-quit:
-		fmt.Println("Thread-", tId, " Teje morto")
-
-		return
+	case id := <-quit:
+		if id > tId {
+			fmt.Println("Thread-", tId, " Teje morto by: ", id)
+			cancel()
+			return
+		}
 	default:
-
-		ctx, cancel := context.WithCancel(context.Background())
-		d.cancel = cancel
-
 		app := "run build -- products"
 		command := strings.Split(app, " ")
 		cmd := exec.CommandContext(ctx, "npm", command...)
@@ -165,15 +143,6 @@ func (d *Daemon) Start(getId func() int, quit chan bool) {
 			err := cmd.Wait()
 			fmt.Println("Thread-", threadId, " -> ", "command exited; error is:", err)
 			_ = outW.Close() // TODO: handle error from Close(); log it maybe.
-			d.cmdErr = err
 		}(tId)
 	}
-}
-
-func (d *Daemon) Cancel() {
-	d.cancel()
-}
-
-func (d *Daemon) CmdErr() error {
-	return d.cmdErr
 }
