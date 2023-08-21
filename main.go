@@ -70,12 +70,19 @@ func main() {
 	for {
 		select {
 		case event := <-watcher.Events:
-			fmt.Println("Got notified")
+			fmt.Println("Event trigger: ", event.Name)
 			if event.Op != fsnotify.Chmod {
+				fmt.Println("Event should build: ", event.Name)
+
 				threadId := threadCounter()
 				if threadId > 1 {
+					fmt.Println("Pushing quit")
 					quit <- threadId
+				} else {
+					fmt.Println("maior que 1")
 				}
+
+				// go stopLock(quit)
 
 				ctx, cancel := context.WithCancel(context.Background())
 				go start(threadId, quit, ctx, cancel)
@@ -99,15 +106,19 @@ func start(tId int, quit chan int, ctx context.Context, cancel context.CancelFun
 
 	select {
 	case id := <-quit:
+		fmt.Println("Thread-", tId, " quit trigger")
 		if id > tId {
 			fmt.Println("Thread-", tId, " Teje morto by: ", id)
 			cancel()
-			return
+		} else {
+			fmt.Println("Thread-", tId, " quit trigger")
 		}
 	default:
-		app := "run build -- products"
+		// app := "run build -- products"
+		app := "test"
 		command := strings.Split(app, " ")
-		cmd := exec.CommandContext(ctx, "npm", command...)
+		// cmd := exec.CommandContext(ctx, "npm", command...)
+		cmd := exec.CommandContext(ctx, "echo", command...)
 
 		toExecute := filepath.Dir(Path)
 		cmd.Dir = toExecute
@@ -142,7 +153,7 @@ func start(tId int, quit chan int, ctx context.Context, cancel context.CancelFun
 		go func(threadId int) {
 			err := cmd.Wait()
 			fmt.Println("Thread-", threadId, " -> ", "command exited; error is:", err)
-			_ = outW.Close() // TODO: handle error from Close(); log it maybe.
+			// _ = outW.Close()
 		}(tId)
 	}
 }
