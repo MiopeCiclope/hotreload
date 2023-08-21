@@ -45,7 +45,7 @@ func watchRecursive(path string, watcher *fsnotify.Watcher) error {
 
 // Ignore folders changed on build
 func isBlackListed(folderName string) bool {
-	blackList := []string{"dist", "node_modules", "build", ".git"}
+	blackList := []string{"dist", "node_modules", "build", ".git", "logs"}
 
 	for _, name := range blackList {
 		if strings.Contains(folderName, name) {
@@ -53,6 +53,15 @@ func isBlackListed(folderName string) bool {
 		}
 	}
 	return false
+}
+
+func keepAlive(quit chan int) {
+	for {
+		select {
+		case id := <-quit:
+			fmt.Println("Keeping alive", id)
+		}
+	}
 }
 
 func main() {
@@ -63,8 +72,10 @@ func main() {
 	toWatch := Path
 	watchRecursive(toWatch, watcher)
 	threadCounter := counter()
-	fmt.Println("watching dir: ", toWatch)
 	quit := make(chan int)
+	go keepAlive(quit)
+
+	fmt.Println("watching dir: ", toWatch)
 
 	// Notify when a change happens
 	for {
@@ -81,8 +92,6 @@ func main() {
 				} else {
 					fmt.Println("maior que 1")
 				}
-
-				// go stopLock(quit)
 
 				ctx, cancel := context.WithCancel(context.Background())
 				go start(threadId, quit, ctx, cancel)
@@ -114,11 +123,11 @@ func start(tId int, quit chan int, ctx context.Context, cancel context.CancelFun
 			fmt.Println("Thread-", tId, " quit trigger")
 		}
 	default:
-		// app := "run build -- products"
-		app := "test"
+		app := "run build -- products"
+		// app := "test"
 		command := strings.Split(app, " ")
-		// cmd := exec.CommandContext(ctx, "npm", command...)
-		cmd := exec.CommandContext(ctx, "echo", command...)
+		cmd := exec.CommandContext(ctx, "npm", command...)
+		// cmd := exec.CommandContext(ctx, "echo", command...)
 
 		toExecute := filepath.Dir(Path)
 		cmd.Dir = toExecute
@@ -153,7 +162,7 @@ func start(tId int, quit chan int, ctx context.Context, cancel context.CancelFun
 		go func(threadId int) {
 			err := cmd.Wait()
 			fmt.Println("Thread-", threadId, " -> ", "command exited; error is:", err)
-			// _ = outW.Close()
+			_ = outW.Close()
 		}(tId)
 	}
 }
