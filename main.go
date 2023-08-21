@@ -55,15 +55,6 @@ func isBlackListed(folderName string) bool {
 	return false
 }
 
-func keepAlive(quit chan int) {
-	for {
-		select {
-		case id := <-quit:
-			fmt.Println("Keeping alive", id)
-		}
-	}
-}
-
 func main() {
 	watcher, err := fsnotify.NewWatcher()
 	check(err)
@@ -72,10 +63,8 @@ func main() {
 	toWatch := Path
 	watchRecursive(toWatch, watcher)
 	threadCounter := counter()
-	quit := make(chan int)
-	go keepAlive(quit)
-
 	fmt.Println("watching dir: ", toWatch)
+	var cancelOut context.CancelFunc
 
 	// Notify when a change happens
 	for {
@@ -88,13 +77,14 @@ func main() {
 				threadId := threadCounter()
 				if threadId > 1 {
 					fmt.Println("Pushing quit")
-					quit <- threadId
+					cancelOut()
 				} else {
-					fmt.Println("maior que 1")
+					fmt.Println("menor que 1")
 				}
 
 				ctx, cancel := context.WithCancel(context.Background())
-				go start(threadId, quit, ctx, cancel)
+				cancelOut = cancel
+				go start(threadId, ctx)
 			}
 		case err, ok := <-watcher.Errors:
 			fmt.Println(ok, err)
@@ -110,59 +100,48 @@ func counter() func() int {
 	}
 }
 
-func start(tId int, quit chan int, ctx context.Context, cancel context.CancelFunc) {
+func start(tId int, ctx context.Context) {
 	fmt.Println("Thread-", tId, " -> start")
 
-	select {
-	case id := <-quit:
-		fmt.Println("Thread-", tId, " quit trigger")
-		if id > tId {
-			fmt.Println("Thread-", tId, " Teje morto by: ", id)
-			cancel()
-		} else {
-			fmt.Println("Thread-", tId, " quit trigger")
+	app := "run build -- products"
+	// app := "test"
+	command := strings.Split(app, " ")
+	cmd := exec.CommandContext(ctx, "npm", command...)
+	// cmd := exec.CommandContext(ctx, "echo", command...)
+
+	toExecute := filepath.Dir(Path)
+	cmd.Dir = toExecute
+
+	outR, outW := io.Pipe()
+	cmd.Stdout = io.MultiWriter(outW, os.Stdout)
+	cmd.Stderr = os.Stderr
+	lines := make(chan string)
+
+	go func(threadId int) {
+		for line := range lines {
+			fmt.Println("Thread-", threadId, " -> ", line)
 		}
-	default:
-		app := "run build -- products"
-		// app := "test"
-		command := strings.Split(app, " ")
-		cmd := exec.CommandContext(ctx, "npm", command...)
-		// cmd := exec.CommandContext(ctx, "echo", command...)
+	}(tId)
 
-		toExecute := filepath.Dir(Path)
-		cmd.Dir = toExecute
-
-		outR, outW := io.Pipe()
-		cmd.Stdout = io.MultiWriter(outW, os.Stdout)
-		cmd.Stderr = os.Stderr
-		lines := make(chan string)
-
-		go func(threadId int) {
-			for line := range lines {
-				fmt.Println("Thread-", threadId, " -> ", line)
-			}
-		}(tId)
-
-		go func(threadId int) {
-			scanner := bufio.NewScanner(outR)
-			for scanner.Scan() {
-				lines <- scanner.Text()
-			}
-			if err := scanner.Err(); err != nil {
-				fmt.Println("Thread-", threadId, " -> ", "scanner: ", err)
-			}
-			close(lines)
-		}(tId)
-
-		err := cmd.Start()
-		if err != nil {
-			fmt.Println("Thread-", tId, " -> ", "Fatal", err)
+	go func(threadId int) {
+		scanner := bufio.NewScanner(outR)
+		for scanner.Scan() {
+			lines <- scanner.Text()
 		}
+		if err := scanner.Err(); err != nil {
+			fmt.Println("Thread-", threadId, " -> ", "scanner: ", err)
+		}
+		close(lines)
+	}(tId)
 
-		go func(threadId int) {
-			err := cmd.Wait()
-			fmt.Println("Thread-", threadId, " -> ", "command exited; error is:", err)
-			_ = outW.Close()
-		}(tId)
+	err := cmd.Start()
+	if err != nil {
+		fmt.Println("Thread-", tId, " -> ", "Fatal", err)
 	}
+
+	go func(threadId int) {
+		err := cmd.Wait()
+		fmt.Println("Thread-", threadId, " -> ", "command exited; error is:", err)
+		_ = outW.Close()
+	}(tId)
 }
