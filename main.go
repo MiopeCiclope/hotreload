@@ -62,7 +62,7 @@ func main() {
 	// Create Watchers
 	toWatch := Path
 	watchRecursive(toWatch, watcher)
-	threadCounter := counter()
+	threadCounter := 0
 	fmt.Println("watching dir: ", toWatch)
 	var cancelOut context.CancelFunc
 
@@ -74,17 +74,14 @@ func main() {
 			if event.Op != fsnotify.Chmod {
 				fmt.Println("Event should build: ", event.Name)
 
-				threadId := threadCounter()
-				if threadId > 1 {
-					fmt.Println("Pushing quit")
+				threadCounter++
+				if cancelOut != nil {
 					cancelOut()
-				} else {
-					fmt.Println("menor que 1")
 				}
 
 				ctx, cancel := context.WithCancel(context.Background())
 				cancelOut = cancel
-				go start(threadId, ctx)
+				go start(threadCounter, ctx)
 			}
 		case err, ok := <-watcher.Errors:
 			fmt.Println(ok, err)
@@ -100,23 +97,25 @@ func counter() func() int {
 	}
 }
 
+/*
+command
+thread id
+cancel func
+lines chan
+cmd
+*/
 func start(tId int, ctx context.Context) {
 	fmt.Println("Thread-", tId, " -> start")
-
-	app := "run build -- products"
-	// app := "test"
-	command := strings.Split(app, " ")
+	command := strings.Split("run build -- products", " ")
 	cmd := exec.CommandContext(ctx, "npm", command...)
-	// cmd := exec.CommandContext(ctx, "echo", command...)
-
 	toExecute := filepath.Dir(Path)
 	cmd.Dir = toExecute
 
 	outR, outW := io.Pipe()
 	cmd.Stdout = io.MultiWriter(outW, os.Stdout)
 	cmd.Stderr = os.Stderr
-	lines := make(chan string)
 
+	lines := make(chan string)
 	go func(threadId int) {
 		for line := range lines {
 			fmt.Println("Thread-", threadId, " -> ", line)
@@ -142,6 +141,6 @@ func start(tId int, ctx context.Context) {
 	go func(threadId int) {
 		err := cmd.Wait()
 		fmt.Println("Thread-", threadId, " -> ", "command exited; error is:", err)
-		_ = outW.Close()
+		outW.Close()
 	}(tId)
 }
