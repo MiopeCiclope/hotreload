@@ -82,7 +82,8 @@ func main() {
 
 				ctx, cancel := context.WithCancel(context.Background())
 				cancelOut = cancel
-				go builder(threadCounter, ctx, Command, Path)
+				builder := createCommand(threadCounter, ctx, Command, Path)
+				go builder.run()
 			}
 		case err, ok := <-watcher.Errors:
 			fmt.Println(ok, err)
@@ -90,22 +91,15 @@ func main() {
 	}
 }
 
-func counter() func() int {
-	sum := 0
-	return func() int {
-		sum++
-		return sum
-	}
-}
-
 type Builder struct {
+	ThreadId  int
 	Cmd       *exec.Cmd
 	Reader    *io.PipeReader
 	Writer    *io.PipeWriter
 	IoChannel chan string
 }
 
-func createCommand(ctx context.Context, command string, path string) (*exec.Cmd, *io.PipeReader, *io.PipeWriter) {
+func createCommand(threadId int, ctx context.Context, command string, path string) Builder {
 	commandSplit := strings.Split(command, " ")
 	cmd := exec.CommandContext(ctx, commandSplit[0], commandSplit[1:]...)
 	toExecute := filepath.Dir(Path)
@@ -114,44 +108,52 @@ func createCommand(ctx context.Context, command string, path string) (*exec.Cmd,
 	outR, outW := io.Pipe()
 	cmd.Stdout = io.MultiWriter(outW, os.Stdout)
 	cmd.Stderr = os.Stderr
-	return cmd, outR, outW
-}
-
-func cmdReader(threadId int, lines chan string) {
-	for line := range lines {
-		fmt.Println("Thread-", threadId, " -> ", line)
-	}
-}
-
-func cmdWriter(threadId int, lines chan string, reader *io.PipeReader) {
-	scanner := bufio.NewScanner(reader)
-	for scanner.Scan() {
-		lines <- scanner.Text()
-	}
-	if err := scanner.Err(); err != nil {
-		fmt.Println("Thread-", threadId, " -> ", "scanner: ", err)
-	}
-	close(lines)
-}
-
-func cmdExit(threadId int, cmd *exec.Cmd, writer *io.PipeWriter) {
-	err := cmd.Wait()
-	fmt.Println("Thread-", threadId, " -> ", "command exited; error is:", err)
-	writer.Close()
-}
-
-func builder(tId int, ctx context.Context, command string, path string) {
-	fmt.Println("Thread-", tId, " -> start")
-	cmd, reader, writer := createCommand(ctx, command, path)
 	lines := make(chan string)
 
-	go cmdReader(tId, lines)
-	go cmdWriter(tId, lines, reader)
-
-	err := cmd.Start()
-	if err != nil {
-		fmt.Println("Thread-", tId, " -> ", "Fatal", err)
+	return Builder{
+		ThreadId:  threadId,
+		Cmd:       cmd,
+		Reader:    outR,
+		Writer:    outW,
+		IoChannel: lines,
 	}
+}
 
-	go cmdExit(tId, cmd, writer)
+func (b Builder) cmdReader() {
+	for line := range b.IoChannel {
+		fmt.Println("Thread-", b.ThreadId, " -> ", line)
+	}
+}
+
+func (b Builder) cmdWriter() {
+	scanner := bufio.NewScanner(b.Reader)
+	for scanner.Scan() {
+		b.IoChannel <- scanner.Text()
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Println("Thread-", b.ThreadId, " -> ", "scanner: ", err)
+	}
+	close(b.IoChannel)
+}
+
+func (b Builder) cmdRun() {
+	err := b.Cmd.Start()
+	if err != nil {
+		fmt.Println("Thread-", b.ThreadId, " -> ", "Fatal", err)
+	}
+}
+
+func (b Builder) cmdExit() {
+	err := b.Cmd.Wait()
+	fmt.Println("Thread-", b.ThreadId, " -> ", "command exited; error is:", err)
+	b.Writer.Close()
+}
+
+func (b Builder) run() {
+	fmt.Println("Thread-", b.ThreadId, " -> start")
+	go b.cmdReader()
+	go b.cmdWriter()
+	b.cmdRun()
+
+	go b.cmdExit()
 }
