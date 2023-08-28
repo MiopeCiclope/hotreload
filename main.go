@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"io"
@@ -14,8 +13,9 @@ import (
 )
 
 const (
-	Path    = "/Users/romulotone/projects/eti-web/"
-	Command = "npm run build -- products"
+	Path = "/Users/romulotone/projects/eti-web/"
+	// Command = "npm run build -- products"
+	Command = "npm run build -- --ignore=@eti/client"
 )
 
 func check(err error) {
@@ -56,6 +56,26 @@ func isBlackListed(folderName string) bool {
 	return false
 }
 
+func createCommand(threadId int, ctx context.Context, command string, path string) Builder {
+	commandSplit := strings.Split(command, " ")
+	cmd := exec.CommandContext(ctx, commandSplit[0], commandSplit[1:]...)
+	toExecute := filepath.Dir(Path)
+	cmd.Dir = toExecute
+
+	outR, outW := io.Pipe()
+	cmd.Stdout = io.MultiWriter(outW, os.Stdout)
+	cmd.Stderr = os.Stderr
+	lines := make(chan string)
+
+	return Builder{
+		ThreadId:  threadId,
+		Cmd:       cmd,
+		Reader:    outR,
+		Writer:    outW,
+		IoChannel: lines,
+	}
+}
+
 func main() {
 	watcher, err := fsnotify.NewWatcher()
 	check(err)
@@ -89,71 +109,4 @@ func main() {
 			fmt.Println(ok, err)
 		}
 	}
-}
-
-type Builder struct {
-	ThreadId  int
-	Cmd       *exec.Cmd
-	Reader    *io.PipeReader
-	Writer    *io.PipeWriter
-	IoChannel chan string
-}
-
-func createCommand(threadId int, ctx context.Context, command string, path string) Builder {
-	commandSplit := strings.Split(command, " ")
-	cmd := exec.CommandContext(ctx, commandSplit[0], commandSplit[1:]...)
-	toExecute := filepath.Dir(Path)
-	cmd.Dir = toExecute
-
-	outR, outW := io.Pipe()
-	cmd.Stdout = io.MultiWriter(outW, os.Stdout)
-	cmd.Stderr = os.Stderr
-	lines := make(chan string)
-
-	return Builder{
-		ThreadId:  threadId,
-		Cmd:       cmd,
-		Reader:    outR,
-		Writer:    outW,
-		IoChannel: lines,
-	}
-}
-
-func (b Builder) cmdReader() {
-	for line := range b.IoChannel {
-		fmt.Println("Thread-", b.ThreadId, " -> ", line)
-	}
-}
-
-func (b Builder) cmdWriter() {
-	scanner := bufio.NewScanner(b.Reader)
-	for scanner.Scan() {
-		b.IoChannel <- scanner.Text()
-	}
-	if err := scanner.Err(); err != nil {
-		fmt.Println("Thread-", b.ThreadId, " -> ", "scanner: ", err)
-	}
-	close(b.IoChannel)
-}
-
-func (b Builder) cmdRun() {
-	err := b.Cmd.Start()
-	if err != nil {
-		fmt.Println("Thread-", b.ThreadId, " -> ", "Fatal", err)
-	}
-}
-
-func (b Builder) cmdExit() {
-	err := b.Cmd.Wait()
-	fmt.Println("Thread-", b.ThreadId, " -> ", "command exited; error is:", err)
-	b.Writer.Close()
-}
-
-func (b Builder) run() {
-	fmt.Println("Thread-", b.ThreadId, " -> start")
-	go b.cmdReader()
-	go b.cmdWriter()
-	b.cmdRun()
-
-	go b.cmdExit()
 }
