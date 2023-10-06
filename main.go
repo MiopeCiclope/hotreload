@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -12,9 +13,8 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// Path    = "/Users/romulotone/projects/eti-web/"
 const (
-	Path = "/Users/romulotone/projects/eti-web/"
-	// Command = "npm run build -- products"
 	Command = "npm run build -- --ignore=@eti/client"
 )
 
@@ -59,7 +59,7 @@ func isBlackListed(folderName string) bool {
 func createCommand(threadId int, ctx context.Context, command string, path string) Builder {
 	commandSplit := strings.Split(command, " ")
 	cmd := exec.CommandContext(ctx, commandSplit[0], commandSplit[1:]...)
-	toExecute := filepath.Dir(Path)
+	toExecute := filepath.Dir(path)
 	cmd.Dir = toExecute
 
 	outR, outW := io.Pipe()
@@ -76,7 +76,27 @@ func createCommand(threadId int, ctx context.Context, command string, path strin
 	}
 }
 
+func getPath() (string, error) {
+	args := os.Args
+	if len(args) < 3 || (args[1] != "-p" && args[1] != "-path") {
+		return "", errors.New("error: Use '-path <eti-web folder>'")
+	}
+
+	secondArg := args[2]
+	if secondArg == "" {
+		return "", errors.New("empty path")
+	}
+
+	return secondArg, nil
+}
+
 func main() {
+	Path, err := getPath()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+
 	watcher, err := fsnotify.NewWatcher()
 	check(err)
 
@@ -91,10 +111,7 @@ func main() {
 	for {
 		select {
 		case event := <-watcher.Events:
-			fmt.Println("Event trigger: ", event.Name)
 			if event.Op != fsnotify.Chmod {
-				fmt.Println("Event should build: ", event.Name)
-
 				threadCounter++
 				if cancelOut != nil {
 					cancelOut()

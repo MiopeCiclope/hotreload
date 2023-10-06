@@ -8,8 +8,12 @@ build:
 	go build -o hotreload
 
 # Run the built binary
+play: 
+	./hotreload -p /Users/romulotone/projects/eti-web/
+
+# Run from code
 run:
-	go run main.go builder.go
+	go run main.go builder.go 
 
 # Clean build artifacts
 clean:
